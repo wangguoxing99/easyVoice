@@ -13,8 +13,10 @@ COPY packages/shared/package.json ./packages/shared/
 # 安装所有依赖
 RUN pnpm install --frozen-lockfile
 
-# 复制全部源码并进行构建 (根据你的 package.json 实际 build 命令调整)
+# 复制全部源码并进行构建 (修复了 COPY 语法错误)
 COPY . .
+
+# 依次构建依赖库和后端
 RUN pnpm --filter shared build
 RUN pnpm --filter backend build
 
@@ -37,5 +39,4 @@ COPY --from=builder /app/packages/backend ./packages/backend
 EXPOSE 3000
 
 # 启动后端服务
-CMD ["node", "packages/backend/dist/server.js"] 
-# 注意：如果你的启动命令不同，请替换为 pnpm --filter backend start 等
+CMD ["node", "packages/backend/dist/server.js"]
