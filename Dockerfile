@@ -1,24 +1,19 @@
-# 阶段 1：构建环境
-FROM node:20-alpine AS builder
+# 阶段 1：构建环境 (使用 slim 防止 Alpine 编译原生依赖报错)
+FROM node:20-slim AS builder
 
 # 启用 pnpm
 RUN corepack enable pnpm
 WORKDIR /app
 
-# 复制依赖配置文件，利用缓存加速安装
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY packages/backend/package.json ./packages/backend/
-COPY packages/shared/package.json ./packages/shared/
+# 直接复制所有源码 (防止漏掉前端的 package.json 导致工作区安装失败)
+COPY . .
 
 # 安装所有依赖
 RUN pnpm install --frozen-lockfile
 
-# 复制全部源码并进行构建 (修复了 COPY 语法错误)
-COPY . .
-
-# 依次构建依赖库和后端
-RUN pnpm --filter shared build
-RUN pnpm --filter backend build
+# 依次构建依赖库和后端 (使用精确的包名)
+RUN pnpm --filter @easy-voice/shared build
+RUN pnpm --filter @easy-voice/backend build
 
 # 阶段 2：生产运行环境
 FROM node:20-alpine AS runner
