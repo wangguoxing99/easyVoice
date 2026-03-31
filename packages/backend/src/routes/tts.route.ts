@@ -33,8 +33,4 @@ router.post('/createStream', pickSchema, createTaskStream)
 router.post('/generate', pickSchema, generateAudio)
 router.post('/generateJson', validateJson, generateJson)
 
-// 专供 阅读App 调用的极速 AI 分角 API
-router.post('/legado', legadoApiHandler)
-router.get('/legado', legadoApiHandler)
-
 export default router
