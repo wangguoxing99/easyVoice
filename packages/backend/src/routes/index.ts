@@ -1,3 +1,4 @@
+import { legadoApiHandler } from '../controllers/legado.controller'
 import { Application } from 'express'
 import ttsRoutes from './tts.route'
 import history from 'connect-history-api-fallback'
