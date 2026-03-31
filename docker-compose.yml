@@ -1,12 +1,26 @@
+version: '3.8'
+
 services:
-  easyvoice:
-    image: cosincox/easyvoice:latest
-    restart: unless-stopped
-    container_name: easyvoice
+  easyvoice-backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: easyvoice-ai-tts
+    restart: unless-stopped # 崩溃或服务器重启后自动拉起
     ports:
-      - "9549:3000"
-    environment:
-      - DEBUG=true
-      - OPENAI_BASE_URL=https://openrouter.ai/api/v1/
+      - "3000:3000" # 左边是宿主机对外暴露的端口，右边是容器内端口
     volumes:
-      - ./audio:/app/audio
+      # 【核心】：将宿主机当前目录下的 data 文件夹映射到容器内
+      # 请确保代码中持久化目录的绝对路径与此对应
+      - ./data:/app/packages/backend/data
+    environment:
+      - TZ=Asia/Shanghai
+      # 在这里配置你的 AI 密钥，极其安全，不会被打包进镜像里
+      - OPENAI_API_KEY=sk-你的大模型密钥填在这里
+      - OPENAI_BASE_URL=https://api.deepseek.com/v1
+      - LLM_MODEL=deepseek-chat
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m" # 限制日志文件大小，防爆盘
+        max-file: "3"
