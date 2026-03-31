@@ -9,7 +9,7 @@ WORKDIR /app
 COPY . .
 
 # 安装所有依赖
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # 依次构建依赖库和后端 (使用精确的包名)
 RUN pnpm --filter @easy-voice/shared build
