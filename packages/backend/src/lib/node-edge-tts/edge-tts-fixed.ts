@@ -74,15 +74,16 @@ class EdgeTTS {
   }
 
   async _connectWebSocket(): Promise<WebSocket> {
+    // 【修复点 1】：动态获取大版本号，确保 UserAgent 与 Sec-MS-GEC-Version 严格匹配，防 403 拦截
+    const CHROMIUM_MAJOR_VERSION = CHROMIUM_FULL_VERSION.split('.')[0]
+
     const wsConnect = new WebSocket(
       `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${generateSecMsGecToken()}&Sec-MS-GEC-Version=1-${CHROMIUM_FULL_VERSION}`,
       {
         host: 'speech.platform.bing.com',
         origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-          +" (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-          + " Edg/143.0.0.0",
+          "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR_VERSION}.0.0.0 Safari/537.36 Edg/${CHROMIUM_FULL_VERSION}`,
         },
         agent: this.proxy ? new HttpsProxyAgent(this.proxy) : undefined,
       }
@@ -96,22 +97,9 @@ class EdgeTTS {
 
       wsConnect.on('open', () => {
         clearTimeout(timeoutId)
+        // 【修复点 2】：移除代码缩进带来的前置空格和多余换行符，防止微软协议解析器报错
         wsConnect.send(
-          `Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n
-          {
-            "context": {
-              "synthesis": {
-                "audio": {
-                  "metadataoptions": {
-                    "sentenceBoundaryEnabled": "${this.sentenceBoundary}",
-                    "wordBoundaryEnabled": "${this.wordBoundary}"
-                  },
-                  "outputFormat": "${this.outputFormat}"
-                }
-              }
-            }
-          }
-        `
+          `Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"${this.sentenceBoundary}","wordBoundaryEnabled":"${this.wordBoundary}"},"outputFormat":"${this.outputFormat}"}}}}`
         )
         resolve(wsConnect)
       })
@@ -124,12 +112,12 @@ class EdgeTTS {
       wsConnect.on('close', (code: number, reason: string) => {
         clearTimeout(timeoutId)
         if (code !== 1000) {
-          // 1000 表示正常关闭
           reject(new Error(`WebSocket closed unexpectedly with code ${code}: ${reason.toString()}`))
         }
       })
     })
   }
+
   async getSrtPath(audioPath: string): Promise<string> {
     let basePath = audioPath + '.srt.json'
     let subPath = basePath
@@ -150,6 +138,7 @@ class EdgeTTS {
       return subPath
     }
   }
+
   async _saveSubFile(subFile: SubLine[], text: string, audioPath: string, outputType?: string) {
     let subPath = audioPath + '.json'
     if (outputType === 'stream') {
@@ -236,13 +225,13 @@ class EdgeTTS {
       if (outputType === 'buffer') rejectBuffer?.(new Error('WebSocket timed out'))
     }, this.timeout)
 
-    // 处理 WebSocket 消息
-    _wsConnect.on('message', (data: Buffer, isBinary: boolean) => {
+    // 【修复点 3】：将回调函数改为 async，保证字幕写入完成
+    _wsConnect.on('message', async (data: Buffer, isBinary: boolean) => {
       clearTimeout(timeout)
       if (isBinary) {
-        const separator = 'Path:audio\r\n'
-        const index = data.indexOf(separator) + separator.length
-        const audioData = data.subarray(index)
+        // 【修复点 4】：使用 `\r\n\r\n` 作为准确的分隔符，避免将头部的换行符混入 MP3 音频块中引起解码爆音
+        const headerEnd = data.indexOf('\r\n\r\n')
+        const audioData = data.subarray(headerEnd + 4)
 
         if (outputType === 'file') {
           try {
@@ -253,14 +242,17 @@ class EdgeTTS {
             throw new Error(`Failed to write to file: ${(err as Error).message}`)
           }
         } else if (outputType === 'stream' && !isStreamDestroyed) {
-          readableStream!.push(audioData) // 实时推送
+          readableStream!.push(audioData) 
         } else if (outputType === 'buffer') {
           audioChunks.push(audioData)
         }
       } else {
         const message = data.toString()
         if (message.includes('Path:turn.end')) {
-          if (saveSubtitles) this._saveSubFile(subFile, text, audioPath!, outputType)
+          if (saveSubtitles) {
+            // 【修补同步问题】：此处必须 await，否则字幕可能没写入流就被关闭
+            await this._saveSubFile(subFile, text, audioPath!, outputType)
+          }
           if (outputType === 'file') {
             audioStream!.end()
             _wsConnect.close()
@@ -272,7 +264,7 @@ class EdgeTTS {
           } else if (outputType === 'buffer') {
             const audioBuffer = Buffer.concat(audioChunks)
             _wsConnect.close()
-            resolveBuffer?.(audioBuffer) // 直接调用 resolve
+            resolveBuffer?.(audioBuffer)
           }
         } else if (message.includes('Path:audio.metadata')) {
           const splitTexts = message.split('\r\n')
@@ -292,7 +284,6 @@ class EdgeTTS {
       }
     })
 
-    // WebSocket 错误处理
     _wsConnect.on('error', (err: Error) => {
       clearTimeout(timeout)
       if (outputType === 'file') {
@@ -304,7 +295,6 @@ class EdgeTTS {
       _wsConnect.close()
     })
 
-    // WebSocket 关闭处理
     _wsConnect.on('close', (code: number, reason: string) => {
       clearTimeout(timeout)
       if (code !== 1000) {
@@ -319,7 +309,6 @@ class EdgeTTS {
       }
     })
 
-    // 文件流错误处理
     if (outputType === 'file') {
       audioStream!.on('error', (err) => {
         audioStream!.end()
@@ -328,18 +317,11 @@ class EdgeTTS {
       })
     }
 
-    // 发送 SSML 请求
     try {
       const requestId = randomBytes(16).toString('hex')
+      // 【修复点 5】：压缩 SSML 请求体的多余换行缩进
       _wsConnect.send(
-        `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n
-        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${this.lang}">
-          <voice name="${this.voice}">
-            <prosody rate="${this.rate}" pitch="${this.pitch}" volume="${this.volume}">
-              ${escapeSSML(text)}
-            </prosody>
-          </voice>
-        </speak>`
+        `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${this.lang}"><voice name="${this.voice}"><prosody rate="${this.rate}" pitch="${this.pitch}" volume="${this.volume}">${escapeSSML(text)}</prosody></voice></speak>`
       )
     } catch (err) {
       _wsConnect.close()
@@ -347,7 +329,6 @@ class EdgeTTS {
       throw new Error(`Failed to send SSML request: ${(err as Error).message}`)
     }
 
-    // 立即返回
     if (outputType === 'stream') {
       return readableStream!
     } else if (outputType === 'buffer') {
